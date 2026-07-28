@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>攤位抽籤系統</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@400;500;700&display=swap');
+
+  :root{
+    --paper:#f2ede1;
+    --ink:#2b2420;
+    --brass:#b8873a;
+    --brass-dark:#8c6224;
+    --stub:#efe3c3;
+    --teal:#2e5c56;
+    --teal-dark:#1f403c;
+    --line:#c9bd9f;
+    --danger:#a4443a;
+    --ok:#2e5c56;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    min-height:100vh;
+    background:
+      radial-gradient(circle at 15% 10%, rgba(184,135,58,0.08), transparent 40%),
+      radial-gradient(circle at 85% 90%, rgba(46,92,86,0.10), transparent 40%),
+      var(--paper);
+    font-family:'Noto Sans TC', sans-serif;
+    color:var(--ink);
+    display:flex;
+    align-items:flex-start;
+    justify-content:center;
+    padding:24px;
+  }
+  .wrap{ width:100%; max-width:520px; display:flex; flex-direction:column; gap:18px; }
+  .card{
+    width:100%;
+    background:#fffdf8;
+    border:1px solid var(--line);
+    border-radius:4px;
+    box-shadow:0 18px 40px -18px rgba(43,36,32,0.35);
+    overflow:hidden;
+  }
+  .header{
+    background:var(--teal-dark);
+    color:#f2ede1;
+    padding:22px 24px 18px;
+    position:relative;
+  }
+  .header .eyebrow{
+    font-size:12px;
+    letter-spacing:.28em;
+    opacity:.75;
+    text-transform:uppercase;
+  }
+  .header h1{
+    font-family:'Noto Serif TC', serif;
+    font-weight:900;
+    font-size:24px;
+    margin:6px 0 0;
+    letter-spacing:.02em;
+  }
+  .body{ padding:26px 24px 24px; }
+  label{
+    display:block;
+    font-size:13px;
+    font-weight:700;
+    margin:16px 0 6px;
+    color:var(--teal-dark);
+  }
+  input[type=text]{
+    width:100%;
+    padding:12px 13px;
+    border:1.5px solid var(--line);
+    border-radius:3px;
+    font-size:15px;
+    font-family:'Noto Sans TC', sans-serif;
+    background:#fdfbf5;
+    color:var(--ink);
+  }
+  input:focus{ outline:2px solid var(--brass); outline-offset:1px; border-color:var(--brass); }
+  .hint{ font-size:12.5px; color:#6b6255; margin-top:6px; line-height:1.5; }
+  button.primary{
+    width:100%;
+    margin-top:22px;
+    padding:14px;
+    border:none;
+    border-radius:3px;
+    background:var(--teal);
+    color:#fff;
+    font-size:16px;
+    font-weight:700;
+    letter-spacing:.04em;
+    cursor:pointer;
+    transition:background .15s ease, transform .1s ease;
+    font-family:'Noto Sans TC', sans-serif;
+  }
+  button.primary:hover{ background:var(--teal-dark); }
+  button.primary:active{ transform:scale(0.99); }
+  button.primary:disabled{ background:#bdb6a6; cursor:not-allowed; }
+  button.ghost{
+    width:100%;
+    margin-top:10px;
+    padding:11px;
+    border:1.5px solid var(--line);
+    border-radius:3px;
+    background:transparent;
+    color:var(--ink);
+    font-size:14px;
+    cursor:pointer;
+    font-family:'Noto Sans TC', sans-serif;
+  }
+  .error{
+    color:var(--danger);
+    font-size:13px;
+    margin-top:8px;
+    font-weight:700;
+  }
+
+  /* ticket / signature element */
+  .ticket{
+    margin:8px 0 4px;
+    display:flex;
+    align-items:stretch;
+    border:2px solid var(--brass-dark);
+    border-radius:6px;
+    overflow:hidden;
+    background:var(--stub);
+  }
+  .ticket-main{
+    flex:1;
+    padding:22px 18px;
+    text-align:center;
+    position:relative;
+  }
+  .ticket-main .label{
+    font-size:12px;
+    letter-spacing:.3em;
+    color:var(--brass-dark);
+    text-transform:uppercase;
+    font-weight:700;
+  }
+  .ticket-number{
+    font-family:'Noto Serif TC', serif;
+    font-weight:900;
+    font-size:72px;
+    line-height:1.05;
+    color:var(--teal-dark);
+    letter-spacing:.02em;
+  }
+  .ticket-stub{
+    width:70px;
+    border-left:2px dashed var(--brass-dark);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    writing-mode:vertical-rl;
+    letter-spacing:.15em;
+    font-size:12px;
+    font-weight:700;
+    color:var(--brass-dark);
+    background:repeating-linear-gradient(135deg, rgba(184,135,58,.08) 0 6px, transparent 6px 12px);
+  }
+  .status-line{
+    font-size:13px;
+    color:var(--teal-dark);
+    font-weight:700;
+    margin-top:14px;
+    text-align:center;
+  }
+  .rolling{ animation: roll 0.06s linear infinite; }
+  @keyframes roll{ from{opacity:1;} to{opacity:.55;} }
+
+  .summary{
+    background:#fbf7ec;
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:14px 16px;
+    font-size:14px;
+    line-height:1.9;
+    margin-top:16px;
+  }
+  .summary b{ color:var(--teal-dark); }
+
+  .footer-note{
+    font-size:12px;
+    color:#8a8172;
+    text-align:center;
+    margin-top:18px;
+    line-height:1.6;
+  }
+
+  /* results board */
+  .board-header{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    padding:18px 22px 4px;
+  }
+  .board-header h2{
+    font-family:'Noto Serif TC', serif;
+    font-size:19px;
+    font-weight:900;
+    margin:0;
+    color:var(--teal-dark);
+  }
+  .board-header .count{
+    font-size:13px;
+    color:#6b6255;
+    font-weight:700;
+  }
+  .refresh-btn{
+    background:none;
+    border:1px solid var(--line);
+    border-radius:3px;
+    font-size:12px;
+    padding:5px 10px;
+    cursor:pointer;
+    color:var(--teal-dark);
+    font-family:'Noto Sans TC', sans-serif;
+  }
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  th,td{ border-bottom:1px solid var(--line); padding:9px 10px; text-align:left; }
+  th{ background:var(--stub); font-weight:700; color:var(--brass-dark); font-size:12px; letter-spacing:.05em; }
+  td.num{ font-family:'Noto Serif TC', serif; font-weight:900; font-size:16px; color:var(--teal-dark); width:46px; }
+  .tag{
+    display:inline-block;
+    font-size:12px;
+    font-weight:700;
+    padding:3px 9px;
+    border-radius:20px;
+  }
+  .tag.drawn{ background:#e2ede9; color:var(--ok); }
+  .tag.pending{ background:#f3e7d8; color:var(--brass-dark); }
+  .board-scroll{ max-height:360px; overflow-y:auto; }
+  .board-footer{ padding:12px 22px 18px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"></div>
+
+<script>
+/* ============ 報名名單（依 2026INW 廣告及攤位申請 回覆表）============ */
+const REGISTERED = [
+  { name: "邱豫彥", company: "禪香企業社" },
+  { name: "陳亞伶", company: "杏花村商行" },
+  { name: "寧家榮", company: "依洛嘉國際實業有限公司" },
+  { name: "陳琦", company: "昭琦國際管理顧問有限公司" },
+  { name: "林孟翰", company: "饗宴餐飲股份有限公司" },
+  { name: "吳凱煌", company: "" },
+  { name: "賴筱青", company: "愷瑞食品行" },
+  { name: "曾愛真", company: "" },
+  { name: "陳玥翎", company: "寶澤珠寶股份有限公司" },
+  { name: "李嘉璋", company: "全立祥股份有限公司" },
+  { name: "朱靜珊", company: "平安姐姐簡單生活顧問有限公司" },
+  { name: "戴宏峻", company: "廣佶達食品" },
+  { name: "翁胤竣", company: "守家有限公司" },
+  { name: "黃士恒", company: "誠律有限公司" },
+  { name: "高健庭", company: "高森國際科技有限公司" },
+  { name: "陳鋐豈", company: "臺壹設計中心" },
+  { name: "梁晏誠", company: "" },
+  { name: "廖英順", company: "" },
+  { name: "陳宗賢教授/BNI台南市區代登記", company: "" }
+];
+
+const NUMBER_MIN = 1;
+const NUMBER_MAX = 18; // 一般抽籤號碼池：01–18
+const RECEIVER_EMAIL = "ningning1209@gmail.com";
+
+/* 保留席次：不參加隨機抽籤，登入後直接鎖定以下號碼 */
+const RESERVED = {
+  "陳宗賢教授/BNI台南市區代登記": 19,
+  "廖英順": 20
+};
+function getReservedNumber(name){
+  const n = normalize(name);
+  for(const key in RESERVED){
+    if(normalize(key) === n) return RESERVED[key];
+  }
+  return null;
+}
+const root = document.getElementById('root');
+
+let session = { name: null, entry: null };
+let refreshTimer = null;
+
+function pad(n){ return String(n).padStart(2,'0'); }
+function normalize(v){ return (v||'').trim().replace(/\s+/g,''); }
+
+function findRegistered(nameInput){
+  const n = normalize(nameInput);
+  return REGISTERED.find(r => normalize(r.name) === n) || null;
+}
+
+async function getDraws(){
+  try{
+    const r = await window.storage.get('draws', true);
+    return r ? JSON.parse(r.value) : {};
+  }catch(e){ return {}; }
+}
+async function saveDraws(obj){
+  try{ await window.storage.set('draws', JSON.stringify(obj), true); }catch(e){ console.error(e); }
+}
+
+/* ============ 抽籤結果總覽（一律顯示） ============ */
+function resultsBoardHTML(draws){
+  const drawnCount = REGISTERED.filter(r => draws[normalize(r.name)] && draws[normalize(r.name)].number).length;
+  // 已抽籤者依號碼排序在前，尚未抽籤者依報名順序排在後
+  const sortedRows = REGISTERED
+    .map(r=>({ r, rec: draws[normalize(r.name)] }))
+    .sort((a,b)=>{
+      const an = a.rec && a.rec.number ? a.rec.number : 999;
+      const bn = b.rec && b.rec.number ? b.rec.number : 999;
+      return an - bn;
+    })
+    .map(({r,rec})=>{
+      const drawn = rec && rec.number;
+      return `<tr>
+        <td class="num">${drawn ? pad(rec.number) : '—'}</td>
+        <td>${(rec && rec.company) || r.company || ''}</td>
+        <td>${r.name}</td>
+        <td>${drawn ? '<span class="tag drawn">已抽籤</span>' : '<span class="tag pending">尚未抽籤</span>'}</td>
+      </tr>`;
+    }).join('');
+
+  return `
+    <div class="card">
+      <div class="board-header">
+        <h2>抽籤結果</h2>
+        <div class="count">已抽 ${drawnCount} / ${REGISTERED.length}</div>
+      </div>
+      <div class="board-scroll">
+        <table>
+          <thead><tr><th>號碼</th><th>公司名稱</th><th>姓名</th><th>狀態</th></tr></thead>
+          <tbody>${sortedRows}</tbody>
+        </table>
+      </div>
+      <div class="board-footer">
+        <button class="refresh-btn" id="refreshBoardBtn">重新整理結果</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindBoardRefresh(){
+  const btn = document.getElementById('refreshBoardBtn');
+  if(btn) btn.onclick = renderCurrent;
+}
+
+/* ============ 畫面渲染框架 ============ */
+async function renderCurrent(){
+  const draws = await getDraws();
+  const board = resultsBoardHTML(draws);
+
+  if(!session.name){
+    renderLoginPanel(board);
+    return;
+  }
+  const key = normalize(session.name);
+  const rec = draws[key];
+  if(rec && rec.company){
+    renderCompletedPanel(board, rec);
+  } else if(rec && rec.number){
+    renderFormPanel(board, rec.number);
+  } else if(session.reservedNumber){
+    renderReservedPanel(board);
+  } else {
+    renderDrawPanel(board);
+  }
+}
+
+function startAutoRefresh(){
+  if(refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(renderCurrent, 8000);
+}
+
+/* ---------- 登入面板 ---------- */
+function renderLoginPanel(boardHTML, errMsg){
+  root.innerHTML = `
+    <div class="card">
+      <div class="header">
+        <div class="eyebrow">攤位展示 · 號碼抽籤</div>
+        <h1>抽籤登入</h1>
+      </div>
+      <div class="body">
+        <label for="nameInput">請輸入您報名時填寫的姓名</label>
+        <input type="text" id="nameInput" placeholder="例：王小明">
+        ${errMsg ? `<div class="error">${errMsg}</div>` : ''}
+        <div class="hint">系統會核對報名名單，姓名須與報名時填寫的完全相同；每位廠商僅能抽籤一次。</div>
+        <button class="primary" id="loginBtn">登入並前往抽籤</button>
+      </div>
+    </div>
+    ${boardHTML}
+  `;
+  document.getElementById('loginBtn').onclick = onLogin;
+  document.getElementById('nameInput').addEventListener('keydown', e=>{ if(e.key==='Enter') onLogin(); });
+  bindBoardRefresh();
+}
+
+async function onLogin(){
+  const val = document.getElementById('nameInput').value;
+  const entry = findRegistered(val);
+  if(!entry){
+    const draws = await getDraws();
+    renderLoginPanel(resultsBoardHTML(draws), '查無此姓名，請確認是否為報名時填寫的姓名（含空白、全形字須一致）。');
+    return;
+  }
+  session.name = entry.name;
+  session.entry = entry;
+  session.reservedNumber = getReservedNumber(entry.name);
+  startAutoRefresh();
+  renderCurrent();
+}
+
+/* ---------- 抽籤面板 ---------- */
+function renderDrawPanel(boardHTML){
+  root.innerHTML = `
+    <div class="card">
+      <div class="header">
+        <div class="eyebrow">已登入：${session.name}</div>
+        <h1>準備抽籤</h1>
+      </div>
+      <div class="body">
+        <div class="ticket">
+          <div class="ticket-main">
+            <div class="label">您的號碼</div>
+            <div class="ticket-number" id="numDisplay">?？</div>
+          </div>
+          <div class="ticket-stub">01–18 抽籤券</div>
+        </div>
+        <div class="status-line" id="statusLine">按下按鈕開始抽籤</div>
+        <button class="primary" id="drawBtn">開始抽籤</button>
+        <button class="ghost" id="logoutBtn">登出／切換姓名</button>
+        <div class="footer-note">號碼範圍 01–18，全程不重複，每人限抽一次。19、20 為保留席次。</div>
+      </div>
+    </div>
+    ${boardHTML}
+  `;
+  document.getElementById('drawBtn').onclick = doDraw;
+  document.getElementById('logoutBtn').onclick = doLogout;
+  bindBoardRefresh();
+}
+
+function doLogout(){
+  session = { name: null, entry: null };
+  if(refreshTimer) clearInterval(refreshTimer);
+  renderCurrent();
+}
+
+async function doDraw(){
+  const btn = document.getElementById('drawBtn');
+  btn.disabled = true;
+  const numDisplay = document.getElementById('numDisplay');
+  const statusLine = document.getElementById('statusLine');
+  statusLine.textContent = '抽籤中...';
+  numDisplay.classList.add('rolling');
+
+  const rollInterval = setInterval(()=>{
+    const r = Math.floor(Math.random()*(NUMBER_MAX-NUMBER_MIN+1))+NUMBER_MIN;
+    numDisplay.textContent = pad(r);
+  }, 60);
+
+  await new Promise(res=>setTimeout(res, 900));
+  clearInterval(rollInterval);
+  numDisplay.classList.remove('rolling');
+
+  const draws = await getDraws();
+  const key = normalize(session.name);
+  if(draws[key] && draws[key].number){
+    renderCurrent();
+    return;
+  }
+  const taken = new Set(Object.values(draws).map(d=>d.number).filter(Boolean));
+  const available = [];
+  for(let i=NUMBER_MIN;i<=NUMBER_MAX;i++){ if(!taken.has(i)) available.push(i); }
+
+  if(available.length === 0){
+    statusLine.textContent = '號碼已全數抽完，請聯絡主辦單位。';
+    return;
+  }
+  const chosen = available[Math.floor(Math.random()*available.length)];
+  numDisplay.textContent = pad(chosen);
+  statusLine.textContent = `恭喜抽中 ${pad(chosen)} 號！`;
+
+  draws[key] = {
+    number: chosen,
+    name: session.name,
+    company: session.entry.company || '',
+    drawnAt: new Date().toISOString()
+  };
+  await saveDraws(draws);
+
+  btn.textContent = '前往填寫攤位資料';
+  btn.disabled = false;
+  btn.onclick = renderCurrent;
+}
+
+/* ---------- 保留席次面板 ---------- */
+function renderReservedPanel(boardHTML){
+  root.innerHTML = `
+    <div class="card">
+      <div class="header">
+        <div class="eyebrow">已登入：${session.name}</div>
+        <h1>保留席次</h1>
+      </div>
+      <div class="body">
+        <div class="ticket">
+          <div class="ticket-main">
+            <div class="label">您的保留號碼</div>
+            <div class="ticket-number">${pad(session.reservedNumber)}</div>
+          </div>
+          <div class="ticket-stub">保留席次</div>
+        </div>
+        <div class="status-line">此號碼為主辦單位保留席次，不需抽籤。</div>
+        <button class="primary" id="confirmReservedBtn">確認並前往填寫資料</button>
+        <button class="ghost" id="logoutBtn">登出／切換姓名</button>
+      </div>
+    </div>
+    ${boardHTML}
+  `;
+  document.getElementById('confirmReservedBtn').onclick = assignReserved;
+  document.getElementById('logoutBtn').onclick = doLogout;
+  bindBoardRefresh();
+}
+
+async function assignReserved(){
+  const draws = await getDraws();
+  const key = normalize(session.name);
+  if(!draws[key] || !draws[key].number){
+    draws[key] = {
+      number: session.reservedNumber,
+      name: session.name,
+      company: session.entry.company || '',
+      drawnAt: new Date().toISOString(),
+      reserved: true
+    };
+    await saveDraws(draws);
+  }
+  renderCurrent();
+}
+
+/* ---------- 填表面板 ---------- */
+function renderFormPanel(boardHTML, number){
+  const prefillCompany = (session.entry && session.entry.company) || '';
+  root.innerHTML = `
+    <div class="card">
+      <div class="header">
+        <div class="eyebrow">已登入：${session.name}</div>
+        <h1>填寫展示資料</h1>
+      </div>
+      <div class="body">
+        <div class="ticket">
+          <div class="ticket-main">
+            <div class="label">您的號碼</div>
+            <div class="ticket-number">${pad(number)}</div>
+          </div>
+          <div class="ticket-stub">${number > NUMBER_MAX ? '保留席次' : '抽籤結果'}</div>
+        </div>
+
+        <label for="company">公司名稱</label>
+        <input type="text" id="company" placeholder="請輸入公司名稱" value="${prefillCompany}">
+
+        <label for="booth">攤位展示名稱</label>
+        <input type="text" id="booth" placeholder="請輸入攤位展示名稱">
+
+        <div class="error" id="formErr" style="display:none;"></div>
+        <button class="primary" id="submitBtn">送出資料</button>
+        <div class="footer-note">送出後將產生郵件，寄送至主辦單位信箱 ${RECEIVER_EMAIL}。</div>
+      </div>
+    </div>
+    ${boardHTML}
+  `;
+  document.getElementById('submitBtn').onclick = ()=> onSubmitForm(number);
+  bindBoardRefresh();
+}
+
+async function onSubmitForm(number){
+  const company = document.getElementById('company').value.trim();
+  const booth = document.getElementById('booth').value.trim();
+  const errEl = document.getElementById('formErr');
+  if(!company || !booth){
+    errEl.textContent = '請完整填寫公司名稱與攤位展示名稱。';
+    errEl.style.display = 'block';
+    return;
+  }
+  const draws = await getDraws();
+  const key = normalize(session.name);
+  draws[key] = {
+    ...(draws[key]||{}),
+    number, name: session.name, company, booth,
+    submittedAt: new Date().toISOString()
+  };
+  await saveDraws(draws);
+  renderCurrent();
+}
+
+/* ---------- 完成面板 ---------- */
+function renderCompletedPanel(boardHTML, record){
+  const subject = encodeURIComponent(`攤位抽籤結果 - ${pad(record.number)}號 - ${record.company}`);
+  const body = encodeURIComponent(
+`攤位抽籤結果通知
+
+抽籤號碼：${pad(record.number)}
+公司名稱：${record.company}
+攤位展示名稱：${record.booth}
+報名姓名：${record.name}
+抽籤時間：${record.drawnAt ? new Date(record.drawnAt).toLocaleString('zh-TW') : ''}`
+  );
+  const mailto = `mailto:${RECEIVER_EMAIL}?subject=${subject}&body=${body}`;
+
+  root.innerHTML = `
+    <div class="card">
+      <div class="header">
+        <div class="eyebrow">已登入：${session.name}</div>
+        <h1>抽籤完成</h1>
+      </div>
+      <div class="body">
+        <div class="ticket">
+          <div class="ticket-main">
+            <div class="label">您的號碼</div>
+            <div class="ticket-number">${pad(record.number)}</div>
+          </div>
+          <div class="ticket-stub">${record.number > NUMBER_MAX ? '保留席次' : '抽籤結果'}</div>
+        </div>
+
+        <div class="summary">
+          公司名稱：<b>${record.company || '（尚未填寫）'}</b><br>
+          攤位展示名稱：<b>${record.booth || '（尚未填寫）'}</b><br>
+          報名姓名：<b>${record.name}</b>
+        </div>
+
+        <a href="${mailto}"><button class="primary" type="button">開啟郵件寄出通知</button></a>
+        <button class="ghost" id="logoutBtn">登出／切換姓名</button>
+        <div class="footer-note">
+          資料已同步保存於系統中，下方「抽籤結果」會即時顯示所有廠商的抽籤狀態。<br>
+          若信箱未開啟，請點擊上方按鈕手動寄出，或截圖此畫面提供給主辦單位。
+        </div>
+      </div>
+    </div>
+    ${boardHTML}
+  `;
+  document.getElementById('logoutBtn').onclick = doLogout;
+  bindBoardRefresh();
+}
+
+renderCurrent();
+startAutoRefresh();
+</script>
+</body>
+</html>
