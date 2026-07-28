@@ -294,14 +294,36 @@ function findRegistered(nameInput){
   return REGISTERED.find(r => normalize(r.name) === n) || null;
 }
 
-async function getDraws(){
+const DRAW_PREFIX = 'draw:';
+
+/* 讀取單一姓名的抽籤紀錄（各自獨立的 key，避免互相覆蓋） */
+async function getOneDraw(key){
   try{
-    const r = await window.storage.get('draws', true);
-    return r ? JSON.parse(r.value) : {};
-  }catch(e){ return {}; }
+    const r = await window.storage.get(DRAW_PREFIX + key, true);
+    return r ? JSON.parse(r.value) : null;
+  }catch(e){ return null; }
 }
-async function saveDraws(obj){
-  try{ await window.storage.set('draws', JSON.stringify(obj), true); }catch(e){ console.error(e); }
+async function saveOneDraw(key, record){
+  try{ await window.storage.set(DRAW_PREFIX + key, JSON.stringify(record), true); }catch(e){ console.error(e); }
+}
+
+/* 讀取全部人的抽籤紀錄，組成 { normalizedName: record } 供看板與號碼池使用 */
+async function getAllDraws(){
+  const result = {};
+  try{
+    const listed = await window.storage.list(DRAW_PREFIX, true);
+    const keys = (listed && listed.keys) || [];
+    const values = await Promise.all(keys.map(async k=>{
+      try{
+        const r = await window.storage.get(k, true);
+        return r ? JSON.parse(r.value) : null;
+      }catch(e){ return null; }
+    }));
+    values.forEach(rec=>{
+      if(rec && rec.name) result[normalize(rec.name)] = rec;
+    });
+  }catch(e){ /* 名單尚未有任何抽籤紀錄時可忽略 */ }
+  return result;
 }
 
 /* ============ 抽籤結果總覽（一律顯示） ============ */
@@ -351,7 +373,7 @@ function bindBoardRefresh(){
 
 /* ============ 畫面渲染框架 ============ */
 async function renderCurrent(){
-  const draws = await getDraws();
+  const draws = await getAllDraws();
   const board = resultsBoardHTML(draws);
 
   if(!session.name){
@@ -360,10 +382,8 @@ async function renderCurrent(){
   }
   const key = normalize(session.name);
   const rec = draws[key];
-  if(rec && rec.company){
+  if(rec && rec.number){
     renderCompletedPanel(board, rec);
-  } else if(rec && rec.number){
-    renderFormPanel(board, rec.number);
   } else if(session.reservedNumber){
     renderReservedPanel(board);
   } else {
@@ -403,7 +423,7 @@ async function onLogin(){
   const val = document.getElementById('nameInput').value;
   const entry = findRegistered(val);
   if(!entry){
-    const draws = await getDraws();
+    const draws = await getAllDraws();
     renderLoginPanel(resultsBoardHTML(draws), '查無此姓名，請確認是否為報名時填寫的姓名（含空白、全形字須一致）。');
     return;
   }
@@ -454,47 +474,81 @@ async function doDraw(){
   btn.disabled = true;
   const numDisplay = document.getElementById('numDisplay');
   const statusLine = document.getElementById('statusLine');
+  const key = normalize(session.name);
+
+  // 再次確認自己是否已經抽過（避免重複點擊或多分頁同時操作）
+  const existing = await getOneDraw(key);
+  if(existing && existing.number){
+    renderCurrent();
+    return;
+  }
+
   statusLine.textContent = '抽籤中...';
   numDisplay.classList.add('rolling');
-
   const rollInterval = setInterval(()=>{
     const r = Math.floor(Math.random()*(NUMBER_MAX-NUMBER_MIN+1))+NUMBER_MIN;
     numDisplay.textContent = pad(r);
   }, 60);
 
-  await new Promise(res=>setTimeout(res, 900));
+  // 立即（在動畫播放的同時）向系統認領號碼，盡量縮短與他人同時搶號的空窗
+  let chosen = null;
+  let attempts = 0;
+  const MAX_ATTEMPTS = 5;
+  while(attempts < MAX_ATTEMPTS){
+    attempts++;
+    const draws = await getAllDraws();
+    if(draws[key] && draws[key].number){
+      // 自己已在其他分頁完成抽籤
+      chosen = draws[key].number;
+      break;
+    }
+    const taken = new Set(Object.values(draws).map(d=>d.number).filter(Boolean));
+    const available = [];
+    for(let i=NUMBER_MIN;i<=NUMBER_MAX;i++){ if(!taken.has(i)) available.push(i); }
+    if(available.length === 0){
+      chosen = null;
+      break;
+    }
+    const candidate = available[Math.floor(Math.random()*available.length)];
+    await saveOneDraw(key, {
+      number: candidate,
+      name: session.name,
+      company: session.entry.company || '',
+      drawnAt: new Date().toISOString()
+    });
+    // 寫入後重新讀取全部資料，確認沒有人在同一瞬間搶到同一個號碼
+    const recheck = await getAllDraws();
+    const conflict = Object.entries(recheck).some(([k, rec])=>
+      k !== key && rec.number === candidate
+    );
+    if(conflict){
+      // 比對搶號時間，時間較晚的一方自動重新抽號
+      const mine = recheck[key];
+      const rival = Object.entries(recheck).find(([k, rec])=> k !== key && rec.number === candidate)[1];
+      if(new Date(mine.drawnAt) > new Date(rival.drawnAt)){
+        continue; // 我方較晚，重新抽一次
+      }
+    }
+    chosen = candidate;
+    break;
+  }
+
+  await new Promise(res=>setTimeout(res, 700));
   clearInterval(rollInterval);
   numDisplay.classList.remove('rolling');
 
-  const draws = await getDraws();
-  const key = normalize(session.name);
-  if(draws[key] && draws[key].number){
-    renderCurrent();
-    return;
-  }
-  const taken = new Set(Object.values(draws).map(d=>d.number).filter(Boolean));
-  const available = [];
-  for(let i=NUMBER_MIN;i<=NUMBER_MAX;i++){ if(!taken.has(i)) available.push(i); }
-
-  if(available.length === 0){
+  if(chosen === null){
     statusLine.textContent = '號碼已全數抽完，請聯絡主辦單位。';
     return;
   }
-  const chosen = available[Math.floor(Math.random()*available.length)];
+
   numDisplay.textContent = pad(chosen);
   statusLine.textContent = `恭喜抽中 ${pad(chosen)} 號！`;
 
-  draws[key] = {
-    number: chosen,
-    name: session.name,
-    company: session.entry.company || '',
-    drawnAt: new Date().toISOString()
-  };
-  await saveDraws(draws);
-
-  btn.textContent = '前往填寫攤位資料';
+  btn.textContent = '查看抽籤結果';
   btn.disabled = false;
   btn.onclick = renderCurrent;
+  setTimeout(renderCurrent, 1400);
 }
 
 /* ---------- 保留席次面板 ---------- */
@@ -526,73 +580,17 @@ function renderReservedPanel(boardHTML){
 }
 
 async function assignReserved(){
-  const draws = await getDraws();
   const key = normalize(session.name);
-  if(!draws[key] || !draws[key].number){
-    draws[key] = {
+  const existing = await getOneDraw(key);
+  if(!existing || !existing.number){
+    await saveOneDraw(key, {
       number: session.reservedNumber,
       name: session.name,
       company: session.entry.company || '',
       drawnAt: new Date().toISOString(),
       reserved: true
-    };
-    await saveDraws(draws);
+    });
   }
-  renderCurrent();
-}
-
-/* ---------- 填表面板 ---------- */
-function renderFormPanel(boardHTML, number){
-  const prefillCompany = (session.entry && session.entry.company) || '';
-  root.innerHTML = `
-    <div class="card">
-      <div class="header">
-        <div class="eyebrow">已登入：${session.name}</div>
-        <h1>填寫展示資料</h1>
-      </div>
-      <div class="body">
-        <div class="ticket">
-          <div class="ticket-main">
-            <div class="label">您的號碼</div>
-            <div class="ticket-number">${pad(number)}</div>
-          </div>
-          <div class="ticket-stub">${number > NUMBER_MAX ? '保留席次' : '抽籤結果'}</div>
-        </div>
-
-        <label for="company">公司名稱</label>
-        <input type="text" id="company" placeholder="請輸入公司名稱" value="${prefillCompany}">
-
-        <label for="booth">攤位展示名稱</label>
-        <input type="text" id="booth" placeholder="請輸入攤位展示名稱">
-
-        <div class="error" id="formErr" style="display:none;"></div>
-        <button class="primary" id="submitBtn">送出資料</button>
-        <div class="footer-note">送出後將產生郵件，寄送至主辦單位信箱 ${RECEIVER_EMAIL}。</div>
-      </div>
-    </div>
-    ${boardHTML}
-  `;
-  document.getElementById('submitBtn').onclick = ()=> onSubmitForm(number);
-  bindBoardRefresh();
-}
-
-async function onSubmitForm(number){
-  const company = document.getElementById('company').value.trim();
-  const booth = document.getElementById('booth').value.trim();
-  const errEl = document.getElementById('formErr');
-  if(!company || !booth){
-    errEl.textContent = '請完整填寫公司名稱與攤位展示名稱。';
-    errEl.style.display = 'block';
-    return;
-  }
-  const draws = await getDraws();
-  const key = normalize(session.name);
-  draws[key] = {
-    ...(draws[key]||{}),
-    number, name: session.name, company, booth,
-    submittedAt: new Date().toISOString()
-  };
-  await saveDraws(draws);
   renderCurrent();
 }
 
@@ -604,7 +602,6 @@ function renderCompletedPanel(boardHTML, record){
 
 抽籤號碼：${pad(record.number)}
 公司名稱：${record.company}
-攤位展示名稱：${record.booth}
 報名姓名：${record.name}
 抽籤時間：${record.drawnAt ? new Date(record.drawnAt).toLocaleString('zh-TW') : ''}`
   );
@@ -626,15 +623,14 @@ function renderCompletedPanel(boardHTML, record){
         </div>
 
         <div class="summary">
-          公司名稱：<b>${record.company || '（尚未填寫）'}</b><br>
-          攤位展示名稱：<b>${record.booth || '（尚未填寫）'}</b><br>
+          公司名稱：<b>${record.company || '（未提供）'}</b><br>
           報名姓名：<b>${record.name}</b>
         </div>
 
         <a href="${mailto}"><button class="primary" type="button">開啟郵件寄出通知</button></a>
         <button class="ghost" id="logoutBtn">登出／切換姓名</button>
         <div class="footer-note">
-          資料已同步保存於系統中，下方「抽籤結果」會即時顯示所有廠商的抽籤狀態。<br>
+          抽籤結果已同步顯示於下方「抽籤結果」清單中。<br>
           若信箱未開啟，請點擊上方按鈕手動寄出，或截圖此畫面提供給主辦單位。
         </div>
       </div>
