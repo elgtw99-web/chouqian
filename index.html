@@ -282,6 +282,10 @@ const NUMBER_MIN = 1;
 const NUMBER_MAX = 18; // 一般抽籤號碼池：01–18
 const RECEIVER_EMAIL = "ningning1209@gmail.com";
 
+/* ⬇⬇⬇ 請將下面換成你部署 Google Apps Script 後拿到的網址（結尾類似 /exec） ⬇⬇⬇ */
+const APPS_SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+/* ⬆⬆⬆ 部署步驟請見對話中的教學 ⬆⬆⬆ */
+
 /* 保留席次：不參加隨機抽籤，登入後直接鎖定以下號碼 */
 const RESERVED = {
   "陳宗賢教授/BNI台南市區代登記": 19,
@@ -307,36 +311,27 @@ function findRegistered(nameInput){
   return REGISTERED.find(r => normalize(r.name) === n) || null;
 }
 
-const DRAW_PREFIX = 'draw:';
-
-/* 讀取單一姓名的抽籤紀錄（各自獨立的 key，避免互相覆蓋） */
-async function getOneDraw(key){
+/* ============ 呼叫 Google Apps Script 後端（Google 試算表即為資料庫） ============ */
+async function apiList(){
   try{
-    const r = await window.storage.get(DRAW_PREFIX + key, true);
-    return r ? JSON.parse(r.value) : null;
-  }catch(e){ return null; }
+    const res = await fetch(`${APPS_SCRIPT_URL}?action=list`);
+    const json = await res.json();
+    return (json && json.ok) ? json.data : {};
+  }catch(e){ console.error('讀取失敗', e); return {}; }
 }
-async function saveOneDraw(key, record){
-  try{ await window.storage.set(DRAW_PREFIX + key, JSON.stringify(record), true); }catch(e){ console.error(e); }
-}
-
-/* 讀取全部人的抽籤紀錄，組成 { normalizedName: record } 供看板與號碼池使用 */
-async function getAllDraws(){
-  const result = {};
+async function apiDraw(rawName, company){
   try{
-    const listed = await window.storage.list(DRAW_PREFIX, true);
-    const keys = (listed && listed.keys) || [];
-    const values = await Promise.all(keys.map(async k=>{
-      try{
-        const r = await window.storage.get(k, true);
-        return r ? JSON.parse(r.value) : null;
-      }catch(e){ return null; }
-    }));
-    values.forEach(rec=>{
-      if(rec && rec.name) result[normalize(rec.name)] = rec;
-    });
-  }catch(e){ /* 名單尚未有任何抽籤紀錄時可忽略 */ }
-  return result;
+    const url = `${APPS_SCRIPT_URL}?action=draw&name=${encodeURIComponent(rawName)}&company=${encodeURIComponent(company||'')}`;
+    const res = await fetch(url);
+    return await res.json();
+  }catch(e){ return { ok:false, error:'network' }; }
+}
+async function apiReserve(rawName, company){
+  try{
+    const url = `${APPS_SCRIPT_URL}?action=reserve&name=${encodeURIComponent(rawName)}&company=${encodeURIComponent(company||'')}`;
+    const res = await fetch(url);
+    return await res.json();
+  }catch(e){ return { ok:false, error:'network' }; }
 }
 
 /* ============ 抽籤結果總覽（一律顯示） ============ */
@@ -386,7 +381,7 @@ function bindBoardRefresh(){
 
 /* ============ 畫面渲染框架 ============ */
 async function renderCurrent(){
-  const draws = await getAllDraws();
+  const draws = await apiList();
   const board = resultsBoardHTML(draws);
 
   if(location.hash === '#board'){
@@ -461,7 +456,7 @@ async function onLogin(){
   const val = document.getElementById('nameInput').value;
   const entry = findRegistered(val);
   if(!entry){
-    const draws = await getAllDraws();
+    const draws = await apiList();
     renderLoginPanel(resultsBoardHTML(draws), '查無此姓名，請確認是否為報名時填寫的姓名（含空白、全形字須一致）。');
     return;
   }
@@ -512,14 +507,6 @@ async function doDraw(){
   btn.disabled = true;
   const numDisplay = document.getElementById('numDisplay');
   const statusLine = document.getElementById('statusLine');
-  const key = normalize(session.name);
-
-  // 再次確認自己是否已經抽過（避免重複點擊或多分頁同時操作）
-  const existing = await getOneDraw(key);
-  if(existing && existing.number){
-    renderCurrent();
-    return;
-  }
 
   statusLine.textContent = '抽籤中...';
   numDisplay.classList.add('rolling');
@@ -528,65 +515,32 @@ async function doDraw(){
     numDisplay.textContent = pad(r);
   }, 60);
 
-  // 立即（在動畫播放的同時）向系統認領號碼，盡量縮短與他人同時搶號的空窗
-  let chosen = null;
-  let attempts = 0;
-  const MAX_ATTEMPTS = 5;
-  while(attempts < MAX_ATTEMPTS){
-    attempts++;
-    const draws = await getAllDraws();
-    if(draws[key] && draws[key].number){
-      // 自己已在其他分頁完成抽籤
-      chosen = draws[key].number;
-      break;
-    }
-    const taken = new Set(Object.values(draws).map(d=>d.number).filter(Boolean));
-    const available = [];
-    for(let i=NUMBER_MIN;i<=NUMBER_MAX;i++){ if(!taken.has(i)) available.push(i); }
-    if(available.length === 0){
-      chosen = null;
-      break;
-    }
-    const candidate = available[Math.floor(Math.random()*available.length)];
-    await saveOneDraw(key, {
-      number: candidate,
-      name: session.name,
-      company: session.entry.company || '',
-      drawnAt: new Date().toISOString()
-    });
-    // 寫入後重新讀取全部資料，確認沒有人在同一瞬間搶到同一個號碼
-    const recheck = await getAllDraws();
-    const conflict = Object.entries(recheck).some(([k, rec])=>
-      k !== key && rec.number === candidate
-    );
-    if(conflict){
-      // 比對搶號時間，時間較晚的一方自動重新抽號
-      const mine = recheck[key];
-      const rival = Object.entries(recheck).find(([k, rec])=> k !== key && rec.number === candidate)[1];
-      if(new Date(mine.drawnAt) > new Date(rival.drawnAt)){
-        continue; // 我方較晚，重新抽一次
-      }
-    }
-    chosen = candidate;
-    break;
-  }
+  // 實際的號碼是由 Google Apps Script 後端配發：後端用 LockService 鎖定，
+  // 同一時間只會處理一位廠商的抽籤請求，確保同姓名只能抽一次、號碼不會重複。
+  const result = await apiDraw(session.name, (session.entry && session.entry.company) || '');
 
-  await new Promise(res=>setTimeout(res, 700));
+  await new Promise(res=>setTimeout(res, 600));
   clearInterval(rollInterval);
   numDisplay.classList.remove('rolling');
 
-  if(chosen === null){
-    statusLine.textContent = '號碼已全數抽完，請聯絡主辦單位。';
+  if(!result || !result.ok){
+    const msg = result && result.error === 'sold_out'
+      ? '號碼已全數抽完，請聯絡主辦單位。'
+      : '系統暫時無法連線，請確認網路後再試一次。';
+    statusLine.textContent = msg;
+    btn.disabled = false;
     return;
   }
 
-  numDisplay.textContent = pad(chosen);
-  statusLine.textContent = `恭喜抽中 ${pad(chosen)} 號！`;
+  numDisplay.textContent = pad(result.number);
+  statusLine.textContent = result.already
+    ? `您先前已抽過，號碼為 ${pad(result.number)} 號。`
+    : `恭喜抽中 ${pad(result.number)} 號！`;
 
   btn.textContent = '查看抽籤結果';
   btn.disabled = false;
   btn.onclick = renderCurrent;
-  setTimeout(renderCurrent, 1400);
+  setTimeout(renderCurrent, 1200);
 }
 
 /* ---------- 保留席次面板 ---------- */
@@ -618,16 +572,10 @@ function renderReservedPanel(boardHTML){
 }
 
 async function assignReserved(){
-  const key = normalize(session.name);
-  const existing = await getOneDraw(key);
-  if(!existing || !existing.number){
-    await saveOneDraw(key, {
-      number: session.reservedNumber,
-      name: session.name,
-      company: session.entry.company || '',
-      drawnAt: new Date().toISOString(),
-      reserved: true
-    });
+  const result = await apiReserve(session.name, (session.entry && session.entry.company) || '');
+  if(!result || !result.ok){
+    renderCurrent();
+    return;
   }
   renderCurrent();
 }
