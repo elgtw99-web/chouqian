@@ -283,7 +283,7 @@ const NUMBER_MAX = 18; // 一般抽籤號碼池：01–18
 const RECEIVER_EMAIL = "ningning1209@gmail.com";
 
 /* ⬇⬇⬇ 請將下面換成你部署 Google Apps Script 後拿到的網址（結尾類似 /exec） ⬇⬇⬇ */
-const APPS_SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby-ZJsf7DdK0Uh393FRfhMGiodJVsD3AFjcbvKhDLwtzWA9dknkqFohB9erpWBb9Hr8/exec";
 /* ⬆⬆⬆ 部署步驟請見對話中的教學 ⬆⬆⬆ */
 
 /* 保留席次：不參加隨機抽籤，登入後直接鎖定以下號碼 */
@@ -305,6 +305,7 @@ let refreshTimer = null;
 
 function pad(n){ return String(n).padStart(2,'0'); }
 function normalize(v){ return (v||'').trim().replace(/\s+/g,''); }
+function normalizePhone(v){ return (v||'').toString().replace(/\D/g,''); }
 
 function findRegistered(nameInput){
   const n = normalize(nameInput);
@@ -312,6 +313,14 @@ function findRegistered(nameInput){
 }
 
 /* ============ 呼叫 Google Apps Script 後端（Google 試算表即為資料庫） ============ */
+function escapeHtml(v){
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 async function apiList(){
   try{
     const res = await fetch(`${APPS_SCRIPT_URL}?action=list`);
@@ -319,16 +328,23 @@ async function apiList(){
     return (json && json.ok) ? json.data : {};
   }catch(e){ console.error('讀取失敗', e); return {}; }
 }
-async function apiDraw(rawName, company){
+async function apiVerify(rawName, passcode){
   try{
-    const url = `${APPS_SCRIPT_URL}?action=draw&name=${encodeURIComponent(rawName)}&company=${encodeURIComponent(company||'')}`;
+    const url = `${APPS_SCRIPT_URL}?action=verify&name=${encodeURIComponent(rawName)}&passcode=${encodeURIComponent(passcode||'')}`;
     const res = await fetch(url);
     return await res.json();
   }catch(e){ return { ok:false, error:'network' }; }
 }
-async function apiReserve(rawName, company){
+async function apiDraw(rawName, passcode){
   try{
-    const url = `${APPS_SCRIPT_URL}?action=reserve&name=${encodeURIComponent(rawName)}&company=${encodeURIComponent(company||'')}`;
+    const url = `${APPS_SCRIPT_URL}?action=draw&name=${encodeURIComponent(rawName)}&passcode=${encodeURIComponent(passcode||'')}`;
+    const res = await fetch(url);
+    return await res.json();
+  }catch(e){ return { ok:false, error:'network' }; }
+}
+async function apiReserve(rawName, passcode){
+  try{
+    const url = `${APPS_SCRIPT_URL}?action=reserve&name=${encodeURIComponent(rawName)}&passcode=${encodeURIComponent(passcode||'')}`;
     const res = await fetch(url);
     return await res.json();
   }catch(e){ return { ok:false, error:'network' }; }
@@ -349,8 +365,8 @@ function resultsBoardHTML(draws){
       const drawn = rec && rec.number;
       return `<tr>
         <td class="num">${drawn ? pad(rec.number) : '—'}</td>
-        <td>${(rec && rec.company) || r.company || ''}</td>
-        <td>${r.name}</td>
+        <td>${escapeHtml((rec && rec.company) || r.company || '')}</td>
+        <td>${escapeHtml(r.name)}</td>
         <td>${drawn ? '<span class="tag drawn">已抽籤</span>' : '<span class="tag pending">尚未抽籤</span>'}</td>
       </tr>`;
     }).join('');
@@ -435,8 +451,10 @@ function renderLoginPanel(boardHTML, errMsg){
       <div class="body">
         <label for="nameInput">請輸入您報名時填寫的姓名</label>
         <input type="text" id="nameInput" placeholder="例：王小明">
+        <label for="phoneInput">請輸入您報名時填寫的手機號碼（通關密碼）</label>
+        <input type="text" id="phoneInput" placeholder="例：0912345678" inputmode="tel">
         ${errMsg ? `<div class="error">${errMsg}</div>` : ''}
-        <div class="hint">系統會核對報名名單，姓名須與報名時填寫的完全相同；每位廠商僅能抽籤一次。</div>
+        <div class="hint">系統會核對報名名單，姓名與手機號碼須與報名時填寫的一致；每位廠商僅能抽籤一次。</div>
         <button class="primary" id="loginBtn">登入並前往抽籤</button>
         <button class="ghost" id="boardLinkBtn">開啟唯讀看板（可分享給多方同步查看）</button>
       </div>
@@ -444,7 +462,7 @@ function renderLoginPanel(boardHTML, errMsg){
     ${boardHTML}
   `;
   document.getElementById('loginBtn').onclick = onLogin;
-  document.getElementById('nameInput').addEventListener('keydown', e=>{ if(e.key==='Enter') onLogin(); });
+  document.getElementById('phoneInput').addEventListener('keydown', e=>{ if(e.key==='Enter') onLogin(); });
   document.getElementById('boardLinkBtn').onclick = ()=>{
     const url = location.href.split('#')[0] + '#board';
     window.open(url, '_blank');
@@ -454,14 +472,25 @@ function renderLoginPanel(boardHTML, errMsg){
 
 async function onLogin(){
   const val = document.getElementById('nameInput').value;
+  const phone = document.getElementById('phoneInput').value;
   const entry = findRegistered(val);
   if(!entry){
     const draws = await apiList();
     renderLoginPanel(resultsBoardHTML(draws), '查無此姓名，請確認是否為報名時填寫的姓名（含空白、全形字須一致）。');
     return;
   }
+  const verify = await apiVerify(entry.name, phone);
+  if(!verify || !verify.ok){
+    const draws = await apiList();
+    const msg = verify && verify.error === 'network'
+      ? '系統暫時無法連線，請確認網路後再試一次。'
+      : '姓名或手機號碼不正確，請確認後再試一次。';
+    renderLoginPanel(resultsBoardHTML(draws), msg);
+    return;
+  }
   session.name = entry.name;
   session.entry = entry;
+  session.passcode = phone;
   session.reservedNumber = getReservedNumber(entry.name);
   startAutoRefresh();
   renderCurrent();
@@ -517,17 +546,21 @@ async function doDraw(){
 
   // 實際的號碼是由 Google Apps Script 後端配發：後端用 LockService 鎖定，
   // 同一時間只會處理一位廠商的抽籤請求，確保同姓名只能抽一次、號碼不會重複。
-  const result = await apiDraw(session.name, (session.entry && session.entry.company) || '');
+  const result = await apiDraw(session.name, session.passcode);
 
   await new Promise(res=>setTimeout(res, 600));
   clearInterval(rollInterval);
   numDisplay.classList.remove('rolling');
 
   if(!result || !result.ok){
-    const msg = result && result.error === 'sold_out'
-      ? '號碼已全數抽完，請聯絡主辦單位。'
-      : '系統暫時無法連線，請確認網路後再試一次。';
-    statusLine.textContent = msg;
+    const ERROR_MSG = {
+      sold_out: '號碼已全數抽完，請聯絡主辦單位。',
+      bad_passcode: '姓名或手機號碼不正確，請登出後重新確認。',
+      closed: '目前尚未開放抽籤，請稍候主辦單位宣布開始。',
+      not_registered: '查無此姓名，請聯絡主辦單位確認。',
+      network: '系統暫時無法連線，請確認網路後再試一次。'
+    };
+    statusLine.textContent = ERROR_MSG[result && result.error] || '發生未知錯誤，請稍後再試或聯絡主辦單位。';
     btn.disabled = false;
     return;
   }
@@ -572,7 +605,7 @@ function renderReservedPanel(boardHTML){
 }
 
 async function assignReserved(){
-  const result = await apiReserve(session.name, (session.entry && session.entry.company) || '');
+  const result = await apiReserve(session.name, session.passcode);
   if(!result || !result.ok){
     renderCurrent();
     return;
@@ -609,8 +642,8 @@ function renderCompletedPanel(boardHTML, record){
         </div>
 
         <div class="summary">
-          公司名稱：<b>${record.company || '（未提供）'}</b><br>
-          報名姓名：<b>${record.name}</b>
+          公司名稱：<b>${escapeHtml(record.company) || '（未提供）'}</b><br>
+          報名姓名：<b>${escapeHtml(record.name)}</b>
         </div>
 
         <a href="${mailto}"><button class="primary" type="button">開啟郵件寄出通知</button></a>
