@@ -236,10 +236,23 @@
   .tag.pending{ background:#f3e7d8; color:var(--brass-dark); }
   .board-scroll{ max-height:360px; overflow-y:auto; }
   .board-footer{ padding:12px 22px 18px; }
+
+  body.board-mode .wrap{ max-width:900px; }
+  body.board-mode table{ font-size:17px; }
+  body.board-mode th, body.board-mode td{ padding:14px 16px; }
+  body.board-mode .board-scroll{ max-height:none; }
+  body.board-mode .board-header h2{ font-size:26px; }
+  body.board-mode .count{ font-size:16px; }
 </style>
 </head>
 <body>
 <div class="wrap" id="root"></div>
+
+<script>
+if(location.hash === '#board'){
+  document.body.classList.add('board-mode');
+}
+</script>
 
 <script>
 /* ============ 報名名單（依 2026INW 廣告及攤位申請 回覆表）============ */
@@ -376,6 +389,11 @@ async function renderCurrent(){
   const draws = await getAllDraws();
   const board = resultsBoardHTML(draws);
 
+  if(location.hash === '#board'){
+    renderBoardOnly(board);
+    return;
+  }
+
   if(!session.name){
     renderLoginPanel(board);
     return;
@@ -393,7 +411,22 @@ async function renderCurrent(){
 
 function startAutoRefresh(){
   if(refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(renderCurrent, 8000);
+  refreshTimer = setInterval(renderCurrent, 4000);
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'visible') renderCurrent();
+});
+
+/* ---------- 唯讀看板模式（網址加 #board，適合投影/多方同步查看） ---------- */
+function renderBoardOnly(boardHTML){
+  document.body.classList.add('board-mode');
+  root.innerHTML = `
+    <div style="text-align:center; padding:6px 4px 4px; color:var(--teal-dark); font-size:13px; font-weight:700; letter-spacing:.1em;">
+      抽籤結果看板（唯讀・即時更新）
+    </div>
+    ${boardHTML}
+  `;
+  bindBoardRefresh();
 }
 
 /* ---------- 登入面板 ---------- */
@@ -410,12 +443,17 @@ function renderLoginPanel(boardHTML, errMsg){
         ${errMsg ? `<div class="error">${errMsg}</div>` : ''}
         <div class="hint">系統會核對報名名單，姓名須與報名時填寫的完全相同；每位廠商僅能抽籤一次。</div>
         <button class="primary" id="loginBtn">登入並前往抽籤</button>
+        <button class="ghost" id="boardLinkBtn">開啟唯讀看板（可分享給多方同步查看）</button>
       </div>
     </div>
     ${boardHTML}
   `;
   document.getElementById('loginBtn').onclick = onLogin;
   document.getElementById('nameInput').addEventListener('keydown', e=>{ if(e.key==='Enter') onLogin(); });
+  document.getElementById('boardLinkBtn').onclick = ()=>{
+    const url = location.href.split('#')[0] + '#board';
+    window.open(url, '_blank');
+  };
   bindBoardRefresh();
 }
 
@@ -568,7 +606,7 @@ function renderReservedPanel(boardHTML){
           <div class="ticket-stub">保留席次</div>
         </div>
         <div class="status-line">此號碼為主辦單位保留席次，不需抽籤。</div>
-        <button class="primary" id="confirmReservedBtn">確認並前往填寫資料</button>
+        <button class="primary" id="confirmReservedBtn">確認保留號碼</button>
         <button class="ghost" id="logoutBtn">登出／切換姓名</button>
       </div>
     </div>
